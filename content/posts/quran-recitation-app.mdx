@@ -1,0 +1,99 @@
+---
+title: "Building a Quran recitation checker with Groq Whisper"
+description: "Audio transcription + API matching to help users verify Quranic recitation. The tricky part wasn't the AI — it was handling silence."
+date: "2026-05-20"
+tags: ["groq", "speech-to-text", "api-integration"]
+---
+
+I built a little app to help people check their Quranic recitation against the actual text. You record yourself reciting, the app transcribes it via Groq's Whisper, and matches it against AlQuran Cloud API to show you where you went off-script.
+
+The hardest part? Silence detection and not charging the user's token budget for empty audio.
+
+## The stack
+
+- **Frontend** — Next.js + React, with the Web Audio API for recording
+- **Transcription** — Groq Whisper (way cheaper than OpenAI, ~100ms per request)
+- **Reference text** — AlQuran Cloud API, free, has every Surah in Arabic + transliteration
+- **Matching** — fuzzy string comparison (levenshtein distance) to handle small transcription errors
+
+The flow is dead simple: record → transcribe → find the closest matching ayah → highlight differences.
+
+## The silence problem
+
+The first version was naive — it sent every audio clip to Groq, even 10-second recordings of someone hitting pause and nothing else. That ate tokens fast.
+
+```javascript
+// Naive approach — sends everything
+const recordAudio = async () => {
+  const blob = await recorder.stop();
+  const result = await fetch("/api/transcribe", {
+    body: blob,
+    method: "POST",
+  });
+};
+```
+
+The fix was to check audio energy before sending:
+
+```javascript
+// Better — detect silence
+const recordAudio = async () => {
+  const blob = await recorder.stop();
+  const audioContext = new AudioContext();
+  const arrayBuffer = await blob.arrayBuffer();
+  const audioData = audioContext.decodeAudioData(arrayBuffer);
+
+  // Calculate RMS (root mean square) to detect if there's actual speech
+  const rms = calculateRMS(audioData);
+  if (rms < SILENCE_THRESHOLD) {
+    showError("No audio detected");
+    return;
+  }
+
+  const result = await fetch("/api/transcribe", {
+    body: blob,
+    method: "POST",
+  });
+};
+```
+
+Still not perfect — Groq's Whisper also returns empty strings sometimes — but it cut unnecessary calls by about 60%.
+
+## Matching the text
+
+Once you have the transcription, AlQuran Cloud has every ayah, so you fuzzy-match against them:
+
+```javascript
+const findClosestAyah = (transcribed, surahs) => {
+  let bestMatch = null;
+  let bestScore = 0;
+
+  surahs.forEach((surah) => {
+    surah.ayahs.forEach((ayah) => {
+      const distance = levenshtein(
+        transcribed.toLowerCase(),
+        ayah.text.toLowerCase()
+      );
+      const similarity = 1 - distance / Math.max(transcribed.length, ayah.text.length);
+
+      if (similarity > bestScore) {
+        bestScore = similarity;
+        bestMatch = ayah;
+      }
+    });
+  });
+
+  return bestMatch;
+};
+```
+
+Green highlight where you matched, red where you didn't. It's satisfying to see.
+
+## What I'd do differently
+
+- **Offline first** — download the entire Quran corpus locally so there's zero latency on matching
+- **Waveform visualization** — show the user what the audio looks like before they send it; helps debug the silence threshold
+- **Batch recording** — let users record multiple ayahs in one go, then process them in sequence
+- **Tajweed hints** — integrate tajweed rules as side notes; "oh, you missed the ghunnah here"
+
+Right now it's a quick weekend project, but if I shipped it properly, offline + waveform vis would make the UX way smoother. The Groq integration is solid, though.

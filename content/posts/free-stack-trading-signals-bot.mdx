@@ -1,0 +1,59 @@
+---
+title: "A free stack for running a trading signals bot 24/7"
+description: "GitHub Actions for scheduling, a free API for price data, and Telegram for delivery — no VPS, no monthly hosting bill."
+date: "2026-06-15"
+tags: ["automation", "github-actions", "telegram"]
+---
+
+You don't need a paid server to run a signal-scanning bot around the clock. Here's a stack that costs $0 and holds up fine for scanning a handful of pairs on a 1H or 4H timeframe.
+
+## The pieces
+
+- **Scheduling** — GitHub Actions with a cron trigger, running your script every N minutes on GitHub's own runners
+- **Price data** — a broker's free demo API (OANDA's demo environment works well for forex) or a free-tier market data API for crypto
+- **Delivery** — the Telegram Bot API, posting straight into a channel or group
+- **Analysis, optionally** — a fast free-tier LLM API for turning raw signal data into a short human-readable summary
+
+None of these require a credit card to get started, and none require you to keep a machine running yourself.
+
+## The workflow file
+
+A minimal scheduled workflow looks like this:
+
+```yaml
+name: scan-signals
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scan.py
+        env:
+          OANDA_API_KEY: ${{ secrets.OANDA_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+```
+
+Secrets go in the repo's Settings → Secrets and variables → Actions — never hardcoded in the script.
+
+## What this setup is good for
+
+- Scanning a small, fixed list of pairs on a timeframe of 15 minutes or slower
+- Pushing signals to a Telegram audience without maintaining a server
+- Iterating fast — every push to main can be tested by triggering the workflow manually
+
+## What it's not good for
+
+- Sub-minute execution — GitHub Actions cron has a practical floor around every few minutes, and scheduled runs aren't guaranteed to fire exactly on time
+- High-frequency anything, or actual order execution against a live account — for real trade execution you want a process that's always running, not a scheduled job
+
+For a signals-only bot, though, this setup is close to free to run indefinitely and simple enough to debug at 2am when something breaks.

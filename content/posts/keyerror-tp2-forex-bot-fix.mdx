@@ -1,0 +1,57 @@
+---
+title: "Fixing a KeyError: 'tp2' bug in a forex signals bot"
+description: "A quick post-mortem on a GitHub Actions + OANDA demo bot that started throwing KeyError: 'tp2' — what caused it and the actual fix."
+date: "2026-06-01"
+tags: ["python", "trading-bots", "debugging"]
+---
+
+If you're running a support/resistance breakout bot on a schedule via GitHub Actions and you start seeing `KeyError: 'tp2'` in your logs, this post walks through the likely cause and the fix.
+
+## The setup
+
+A typical setup for this kind of bot looks like:
+
+- A Python script scanning several pairs on a fixed timeframe
+- Graded signals (something like Strong / Moderate / Watch) based on how clean the breakout is
+- OANDA's demo API for price data
+- A scheduled GitHub Actions workflow that runs the script every N minutes
+- Signals pushed out over the Telegram Bot API
+
+Each signal is built as a dictionary with keys like `entry`, `sl`, `tp1`, `tp2`, and `grade`. That's usually where this bug lives.
+
+## Why it happens
+
+`tp2` (a second take-profit target) is often only calculated conditionally — for example, only for "Strong" grade signals where there's enough room to the next resistance level. If your downstream code (the part that formats and sends the Telegram message) assumes every signal dictionary has a `tp2` key, it breaks the moment a "Moderate" or "Watch" signal comes through without one.
+
+```python
+# This blows up on any signal that didn't get a tp2
+message = f"TP2: {signal['tp2']}"
+```
+
+## The fix
+
+Don't assume the key exists — use `.get()` with a sensible fallback, and make the formatting logic conditional:
+
+```python
+tp2 = signal.get("tp2")
+
+message = f"TP1: {signal['tp1']}"
+if tp2:
+    message += f"\nTP2: {tp2}"
+```
+
+The more durable fix is upstream: make every signal dictionary shape-consistent, even if some values are `None`, so nothing downstream has to guess whether a key is present.
+
+```python
+signal = {
+    "entry": entry_price,
+    "sl": stop_loss,
+    "tp1": tp1,
+    "tp2": tp2 if grade == "Strong" else None,
+    "grade": grade,
+}
+```
+
+## Takeaway
+
+Any time a bot's signal payload has fields that are only sometimes populated, standardize the shape at the source instead of patching every place downstream that reads it. Saves you from the same class of `KeyError` showing up again with a different key name next time.

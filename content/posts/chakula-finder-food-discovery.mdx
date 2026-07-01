@@ -1,0 +1,139 @@
+---
+title: "Chakula Finder — a geolocation food discovery app"
+description: "Finding restaurants near you with React, Tailwind, and the browser's geolocation API. Turns out users don't always allow location access."
+date: "2026-04-10"
+tags: ["react", "tailwind", "geolocation"]
+---
+
+I built Chakula Finder as a quick way to discover restaurants near your location in Nairobi. Chakula means "food" in Swahili, and the app does exactly what the name says — it finds it.
+
+## The concept
+
+- User clicks "Find food"
+- Browser asks for permission to access location
+- App fetches nearby restaurants (coordinates + cuisines)
+- Shows them on a map or list, sorted by distance
+
+Simple, right? The reality was a bit messier.
+
+## Geolocation isn't always a given
+
+The first surprise: a lot of users just tap "deny" on the location permission prompt. Whether it's privacy concern, habit, or they're testing on desktop — you need a fallback.
+
+```javascript
+const [location, setLocation] = useState(null);
+const [locationError, setLocationError] = useState(null);
+
+const requestLocation = () => {
+  if (!navigator.geolocation) {
+    setLocationError("Geolocation not supported");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      setLocation({
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      });
+    },
+    (error) => {
+      if (error.code === error.PERMISSION_DENIED) {
+        setLocationError("Location access denied. Try searching by area instead.");
+      }
+    }
+  );
+};
+```
+
+So I added a fallback: search by area (Westlands, Karen, etc.) if location access fails.
+
+## Mobile-first, always
+
+Since the app is primarily for phones, I built mobile-first from the start. Tailwind made this easy:
+
+```jsx
+export const RestaurantCard = ({ restaurant }) => (
+  <div className="p-4 border border-gray-700 rounded-lg bg-gray-900 mb-3">
+    {/* Mobile: stacked, full width */}
+    <div className="flex flex-col md:flex-row md:justify-between md:items-start">
+      <div className="mb-3 md:mb-0">
+        <h3 className="text-lg font-semibold text-white">
+          {restaurant.name}
+        </h3>
+        <p className="text-sm text-gray-400">{restaurant.cuisines.join(", ")}</p>
+      </div>
+      <div className="text-right">
+        <p className="text-sm text-teal-400 font-mono">
+          {restaurant.distance.toFixed(1)} km
+        </p>
+      </div>
+    </div>
+  </div>
+);
+```
+
+At `md:` breakpoint, it shifts to a side-by-side layout. The dark theme (grays + teal accents) matches the vibe.
+
+## The data problem
+
+Here's where I hit a wall: **keeping restaurant data fresh is tedious**. I initially hardcoded a JSON file, but:
+
+- Restaurants close or move
+- New ones open constantly
+- Cuisines change (Somali restaurant starts serving Ethiopian)
+
+I ended up using a simple Google Sheets + Zapier integration to let people submit new spots. Not scalable, but it works for a regional app.
+
+```javascript
+// Fetch from a Google Sheets API endpoint
+const fetchRestaurants = async (area) => {
+  const response = await fetch(`/api/restaurants?area=${area}`);
+  return response.json();
+};
+```
+
+On the backend, it's just reading a cached Sheets export and filtering by coordinates or area name.
+
+## Distance calculation
+
+Nothing fancy here, just Haversine formula:
+
+```javascript
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+```
+
+Sort by distance, and you're done.
+
+## What worked, what didn't
+
+**Worked:**
+- Asking for location but not making it required
+- Tailwind's utility classes made the mobile layout feel natural
+- Users liked the area fallback (some prefer not to share location, and that's fine)
+
+**Didn't work:**
+- Hardcoded restaurant data; needs automation
+- No filtering by cuisine initially; added it later
+- Map view was slower than list — ended up ditching it for MVP
+
+Current version: simple list, sorted by distance, option to filter by cuisine. Users get what they came for in under 2 seconds.
+
+If I revisit it, I'd add:
+- Real-time data sync with a restaurant partner's API
+- User ratings / reviews (crowdsourced)
+- Opening hours and menus if available
+
+For now, it's a solid utility for finding where to eat when you're hungry and have no idea what's nearby.
